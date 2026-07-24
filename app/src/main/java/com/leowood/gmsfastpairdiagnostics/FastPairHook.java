@@ -1,7 +1,7 @@
 package com.leowood.gmsfastpairdiagnostics;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Member;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -104,7 +104,7 @@ public final class FastPairHook implements IXposedHookLoadPackage {
                         }
 
                         StringBuilder message = new StringBuilder();
-                        message.append(signature(param.method))
+                        message.append(signature((Method) param.method))
                                 .append(" result=")
                                 .append(safe(param.getResult()));
 
@@ -184,7 +184,7 @@ public final class FastPairHook implements IXposedHookLoadPackage {
         return out.append('}').toString();
     }
 
-    private static String signature(Member method) {
+    private static String signature(Method method) {
         return method.getDeclaringClass().getName()
                 + "#"
                 + method.getName()
