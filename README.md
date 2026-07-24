@@ -1,86 +1,98 @@
-# GMS Fast Pair LSPosed Diagnostics
+# 小米 Tag / Google Find Hub LSPosed 修复
 
-An LSPosed diagnostic module for tracing why Google Play services suppresses
-the Fast Pair half-sheet for a certified tracker.
+这是一个针对国行小米手机的实验性 LSPosed 模块，用来恢复 Google Play 服务中的 Fast Pair / Find Hub（查找中心）配对流程。
 
-The initial target is Google Play services
-`26.26.34 (260400-945364269)`. Its relevant obfuscated classes are:
+本项目已经在以下环境中完整跑通：手机发现 Xiaomi Tag、弹出配对页面、完成连接，并成功打开“储存最新的位置信息”。
 
-- `drgg`: initial Fast Pair half-sheet decision manager
-- `dqqi`: eligibility and suppression predicates used by `drgg`
-- `dreq`: the scanned-device request
-- `dpyf`: `InitialPairingDeviceChecker`
+## 已验证环境
 
-## Important finding
+- 手机：Redmi K80 Pro（`24122RKC7C`）
+- 系统：国行 HyperOS `OS2.0.15.0.VOMCNXM`，Android 15
+- Google Play 服务：`26.26.34 (260400-945364269)`
+- Tag：国际版 Xiaomi Tag，Fast Pair model ID `15D23E`
+- Root + LSPosed
 
-`InitialPairingDeviceChecker` is not the source of
-`DEVICE_NOT_SUPPORTED`. In this build, `dpyf` performs cached-device/address
-checks after a scan has already passed the half-sheet eligibility decision.
-The final scan result is produced by `drgg.g(dreq)`.
+其他手机、系统版本、Google Play 服务版本或 Tag 型号不保证可用。
 
-Version 0.2.0 hooks the locator-tag handler `drhl.e(dreq)`. For Xiaomi Tag
-model ID `15D23E` only, it changes that handler's
-`DEVICE_NOT_SUPPORTED` result to `SUCCESS`, allowing the original
-`drgg.g(dreq)` method to continue and launch the half-sheet. Other models and
-other eligibility checks are unchanged.
+## 下载与安装
 
-Version 0.3.0 additionally prevents Google Play services from disabling its own
-Fast Pair `HalfSheetActivity`. On the affected CN build, GMS disables that
-component immediately after the half-sheet is drawn, causing the activity to
-close and subsequent launches to fail with `ActivityNotFoundException`.
+从 [Releases](https://github.com/leowood2000/gms-fastpair-lsposed/releases/latest) 下载 APK，然后：
 
-Version 0.4.0 extends that protection to the Fast Pair slice provider,
-discovery service, and devices-list activity. The slice provider is required by
-the half-sheet's connecting action; without it Android reports the
-`com.google.android.gms.nearby.fastpair` URI as unknown and the UI remains on
-"Connecting".
+1. 安装 APK。
+2. 在 LSPosed 中启用本模块。
+3. 模块作用域只勾选 **Google Play 服务**（`com.google.android.gms`）。
+4. 重启手机。
+5. 让 Tag 重新进入配对模式；确认听到两声后，将它靠近手机。
+6. 按照 Google Fast Pair / Find Hub 页面完成连接。
 
-## Build
+如果升级 APK 时提示签名不一致，请先卸载旧版模块再安装新版，然后重新在 LSPosed 中启用并重启。
+
+## 必须打开的三个开关
+
+国行环境中的 Google Play 服务会通过内部 Phenotype 配置关闭 Find Hub 的关键路径。本模块把以下三个开关强制设为开启：
+
+| GMS 内部开关 | 本版本对应方法 | 关闭时的表现 |
+| --- | --- | --- |
+| `EnableFindMyDeviceModule__enable_fast_pair_accessories` | `jwbd.g()` | `SpotFastPair.API` 返回 `API_UNAVAILABLE` / status 17，无法连接 Find Hub 服务 |
+| `enable_fast_pair_spot_integration` | `jyxk.K()` | 扫描阶段返回 `DEVICE_NOT_SUPPORTED`，或定位 Tag 的最终连接页面失败 |
+| `EnableFindMyDeviceModule__enable_self_location_reporting` | `jwbd.j()` | 开启“储存最新的位置信息”时失败，并出现 `Self location reporting is disabled` |
+
+这些是 Google Play 服务内部的服务端/Phenotype 开关，不是 Android 的普通系统属性，因此用 `adb shell setprop` 修改手机型号或 fingerprint 并不能直接打开它们。
+
+## 模块还做了什么
+
+除了打开上面的三个开关，模块还会：
+
+- 仅对 Fast Pair model ID `15D23E`，把定位 Tag 处理器 `drhl.e(dreq)` 返回的 `DEVICE_NOT_SUPPORTED` 改为 `SUCCESS`。
+- 阻止 Google Play 服务在配对过程中禁用以下组件：
+  - `HalfSheetActivity`
+  - `FastPairSliceProvider`
+  - `DiscoveryService`
+  - `DevicesListActivity`
+- 保留诊断日志，并自动隐藏扫描到的蓝牙 MAC 地址。
+
+`InitialPairingDeviceChecker` 并不是本次 `DEVICE_NOT_SUPPORTED` 的根源。在已验证的 GMS 版本里，它负责扫描已经通过初步资格判断后的缓存设备/地址检查；真正需要处理的是 locator-tag 路径和上述三个内部开关。
+
+## 查看日志
+
+Windows PowerShell：
+
+```powershell
+adb logcat -c
+adb logcat -v time | Select-String GmsFastPairDiag
+```
+
+也可以使用：
+
+```powershell
+adb logcat -s LSPosedFramework | findstr GmsFastPairDiag
+```
+
+日志中的关键内容包括：
+
+- `enable_fast_pair_accessories`
+- `enable_fast_pair_spot_integration`
+- `enable_self_location_reporting`
+- `bypass drhl#e DEVICE_NOT_SUPPORTED -> SUCCESS`
+- 被 GMS 禁用但由模块保留的 Fast Pair 组件
+
+## 编译
+
+需要 JDK 17、Android SDK，以及 Gradle 8.9：
 
 ```text
 gradle :app:assembleDebug
 ```
 
-GitHub Actions also builds the APK and uploads it as a workflow artifact.
+GitHub Actions 也会构建 APK，并将其作为 workflow artifact 上传。
 
-## Use
+## 兼容性与风险
 
-1. Install the APK.
-2. Enable it in LSPosed.
-3. Scope it only to **Google Play services** (`com.google.android.gms`).
-4. Reboot, or fully stop and restart Google Play services.
-5. Clear logs and put the tracker into pairing mode.
-6. Capture the diagnostic output:
+- 本模块依赖 Google Play 服务 `26.26.34` 中的混淆类名和方法名。GMS 更新后这些名称可能变化，模块可能失效。
+- 目前只对 `15D23E` 做了资格绕过；国行版 Xiaomi Tag 或其他 tracker 是否使用相同 model ID，需要单独验证。
+- 开启 self-location reporting 后，Find Hub 会按照 Google 的产品机制保存或上报设备的最后位置。请只在理解该功能并接受其隐私影响时使用。
+- Root、LSPosed、修改 Google Play 服务行为均有风险。本项目仅用于研究与个人测试，不保证适用于所有设备，也不保证通过任何完整性检查。
 
-```text
-adb logcat -c
-adb logcat -v time | grep GmsFastPairDiag
-```
+## 版本
 
-On Windows:
-
-```powershell
-adb logcat -v time | Select-String GmsFastPairDiag
-```
-
-The useful lines include:
-
-- `dqqi#... result=...`: individual eligibility predicates
-- `drgg#g... result=...`: final half-sheet result
-- `decision stack`: caller chain for the final decision
-- `dpyf#...`: cached-device checker timing
-
-Bluetooth MAC addresses are redacted by the module.
-
-## Compatibility
-
-Google Play services uses obfuscated class names and may change them with every
-update. A future GMS version may require updating the class and method map.
-
-## Why the hook is on `drhl.e`
-
-`drhl` is the GMS locator-tag-specific subclass. It returns
-`DEVICE_NOT_SUPPORTED` when the Find Hub/SPOT integration flag is disabled,
-the scanned tag lacks the expected `EDDYSTONE_TRACKING` feature, or the SPOT
-API is considered unavailable. The hook leaves `drgg.g()` intact because that
-method performs the actual half-sheet launch.
+`v0.7.0` 是首个完成全流程验证的版本，包含三个 Find Hub 开关、定位 Tag 资格修复以及 Fast Pair 组件保护。
