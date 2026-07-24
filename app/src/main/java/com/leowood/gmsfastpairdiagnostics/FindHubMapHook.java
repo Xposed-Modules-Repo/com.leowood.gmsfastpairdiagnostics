@@ -30,6 +30,8 @@ final class FindHubMapHook {
 
     static void install(ClassLoader loader, String processName) {
         log("loaded process=" + processName);
+        hookLatLngConstructors(loader);
+        hookCameraPositionConstructors(loader);
         hookLatLngArgument(
                 loader,
                 "com.google.android.gms.maps.model.MarkerOptions",
@@ -51,6 +53,65 @@ final class FindHubMapHook {
                 "newLatLngZoom",
                 "CameraUpdateFactory.newLatLngZoom");
         hookCameraPosition(loader);
+    }
+
+    private static void hookLatLngConstructors(ClassLoader loader) {
+        Class<?> latLng = XposedHelpers.findClassIfExists(
+                "com.google.android.gms.maps.model.LatLng", loader);
+        if (latLng == null) {
+            log("LatLng class not found");
+            return;
+        }
+
+        String key = latLng.getName() + "#<init>";
+        synchronized (HOOKED) {
+            if (!HOOKED.add(key)) {
+                return;
+            }
+        }
+
+        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllConstructors(
+                latLng,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Coordinate coordinate = readCoordinate(param.thisObject);
+                        if (coordinate != null) {
+                            record("LatLng.<init>", coordinate, param.method);
+                        }
+                    }
+                });
+        log("hooked " + key + " overloads=" + unhooks.size());
+    }
+
+    private static void hookCameraPositionConstructors(ClassLoader loader) {
+        Class<?> cameraPosition = XposedHelpers.findClassIfExists(
+                "com.google.android.gms.maps.model.CameraPosition", loader);
+        if (cameraPosition == null) {
+            log("CameraPosition class not found");
+            return;
+        }
+
+        String key = cameraPosition.getName() + "#<init>";
+        synchronized (HOOKED) {
+            if (!HOOKED.add(key)) {
+                return;
+            }
+        }
+
+        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllConstructors(
+                cameraPosition,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object target = readField(param.thisObject, "target");
+                        Coordinate coordinate = readCoordinate(target);
+                        if (coordinate != null) {
+                            record("CameraPosition.<init>", coordinate, param.method);
+                        }
+                    }
+                });
+        log("hooked " + key + " overloads=" + unhooks.size());
     }
 
     private static void hookLatLngArgument(
@@ -81,6 +142,9 @@ final class FindHubMapHook {
                     }
                 });
         log("hooked " + key + " overloads=" + unhooks.size());
+        if (unhooks.isEmpty()) {
+            logDeclaredMethods(target);
+        }
     }
 
     private static void hookCameraPosition(ClassLoader loader) {
@@ -212,6 +276,18 @@ final class FindHubMapHook {
             }
         }
         return out.toString();
+    }
+
+    private static void logDeclaredMethods(Class<?> target) {
+        StringBuilder methods = new StringBuilder();
+        int written = 0;
+        for (Method method : target.getDeclaredMethods()) {
+            methods.append("  ").append(method.toGenericString()).append('\n');
+            if (++written >= 40) {
+                break;
+            }
+        }
+        log("declared methods for " + target.getName() + ":\n" + methods);
     }
 
     private static String format(double value) {
