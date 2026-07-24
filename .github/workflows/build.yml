@@ -20,7 +20,13 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build diagnostic APK
+      - name: Preserve debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
+      - name: Build LSPosed APK
         run: gradle :app:assembleDebug
 
       - uses: actions/upload-artifact@v4

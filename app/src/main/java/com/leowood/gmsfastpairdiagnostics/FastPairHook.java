@@ -23,6 +23,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  */
 public final class FastPairHook implements IXposedHookLoadPackage {
     private static final String TAG = "[GmsFastPairDiag] ";
+    private static final String TARGET_MODEL_ID = "15d23e";
+    private static final int DEVICE_NOT_SUPPORTED = 11;
+    private static final int SUCCESS = 15;
     private static final Pattern MAC =
             Pattern.compile("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}");
     private static final Set<String> HOOKED = new HashSet<>();
@@ -35,6 +38,7 @@ public final class FastPairHook implements IXposedHookLoadPackage {
 
         log("loaded process=" + lpparam.processName);
         hookFinalDecision(lpparam.classLoader);
+        hookLocatorTagEligibility(lpparam.classLoader);
         hookEligibilityPredicates(lpparam.classLoader);
         hookInitialPairingObserver(lpparam.classLoader);
     }
@@ -47,6 +51,44 @@ public final class FastPairHook implements IXposedHookLoadPackage {
         }
 
         hookAll(manager, "g", true);
+    }
+
+    private static void hookLocatorTagEligibility(ClassLoader loader) {
+        Class<?> locatorHandler = XposedHelpers.findClassIfExists("drhl", loader);
+        if (locatorHandler == null) {
+            log("drhl locator-tag handler not found");
+            return;
+        }
+
+        String key = locatorHandler.getName() + "#e:bypass";
+        if (!HOOKED.add(key)) {
+            return;
+        }
+
+        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
+                locatorHandler,
+                "e",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object request = findRequest(param.args);
+                        if (!isTargetTag(request) || param.hasThrowable()) {
+                            return;
+                        }
+
+                        Object original = param.getResult();
+                        log("locator eligibility original=" + safe(original)
+                                + " request=" + describeRequest(request));
+                        if (original instanceof Integer
+                                && ((Integer) original) == DEVICE_NOT_SUPPORTED) {
+                            param.setResult(SUCCESS);
+                            log("bypass drhl#e DEVICE_NOT_SUPPORTED -> SUCCESS"
+                                    + " model=" + TARGET_MODEL_ID);
+                        }
+                    }
+                });
+
+        log("hooked " + key + " overloads=" + unhooks.size());
     }
 
     private static void hookEligibilityPredicates(ClassLoader loader) {
@@ -148,6 +190,21 @@ public final class FastPairHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    private static boolean isTargetTag(Object request) {
+        if (request == null) {
+            return false;
+        }
+        try {
+            Field modelId = request.getClass().getDeclaredField("e");
+            modelId.setAccessible(true);
+            Object value = modelId.get(request);
+            return value != null && TARGET_MODEL_ID.equalsIgnoreCase(String.valueOf(value));
+        } catch (Throwable error) {
+            log("cannot read target model id: " + error);
+            return false;
+        }
     }
 
     private static String describeRequest(Object request) {

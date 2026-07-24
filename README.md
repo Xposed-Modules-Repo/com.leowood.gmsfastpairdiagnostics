@@ -18,8 +18,11 @@ The initial target is Google Play services
 checks after a scan has already passed the half-sheet eligibility decision.
 The final scan result is produced by `drgg.g(dreq)`.
 
-This first version is deliberately diagnostic-only: it logs return values and
-the final decision stack, but does not modify Google Play services behavior.
+Version 0.2.0 also hooks the locator-tag handler `drhl.e(dreq)`. For Xiaomi Tag
+model ID `15D23E` only, it changes that handler's
+`DEVICE_NOT_SUPPORTED` result to `SUCCESS`, allowing the original
+`drgg.g(dreq)` method to continue and launch the half-sheet. Other models and
+other eligibility checks are unchanged.
 
 ## Build
 
@@ -63,9 +66,10 @@ Bluetooth MAC addresses are redacted by the module.
 Google Play services uses obfuscated class names and may change them with every
 update. A future GMS version may require updating the class and method map.
 
-## Next step
+## Why the hook is on `drhl.e`
 
-After identifying the exact predicate that produces
-`DEVICE_NOT_SUPPORTED`, add a narrowly scoped, opt-in bypass for model ID
-`15D23E`. Do not replace `drgg.g()` itself: that method also launches the
-half-sheet, so returning `SUCCESS` from a replacement would skip the launch.
+`drhl` is the GMS locator-tag-specific subclass. It returns
+`DEVICE_NOT_SUPPORTED` when the Find Hub/SPOT integration flag is disabled,
+the scanned tag lacks the expected `EDDYSTONE_TRACKING` feature, or the SPOT
+API is considered unavailable. The hook leaves `drgg.g()` intact because that
+method performs the actual half-sheet launch.
