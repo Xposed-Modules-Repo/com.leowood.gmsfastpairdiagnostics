@@ -48,11 +48,52 @@ public final class FastPairHook implements IXposedHookLoadPackage {
         log("loaded process=" + lpparam.processName);
         keepHalfSheetComponentEnabled();
         hookSpotFastPairServerFlag(lpparam.classLoader);
+        hookSelfLocationReportingFlag(lpparam.classLoader);
         hookFastPairSpotIntegrationFlag(lpparam.classLoader);
         hookFinalDecision(lpparam.classLoader);
         hookLocatorTagEligibility(lpparam.classLoader);
         hookEligibilityPredicates(lpparam.classLoader);
         hookInitialPairingObserver(lpparam.classLoader);
+    }
+
+    /**
+     * ChangeFindMyDeviceSettings rejects enabling Last Known Location when
+     * jwbd.j() is false, throwing "Self location reporting is disabled."
+     * jwbd.j() reads:
+     *
+     * EnableFindMyDeviceModule__enable_self_location_reporting
+     */
+    private static void hookSelfLocationReportingFlag(ClassLoader loader) {
+        Class<?> flags = XposedHelpers.findClassIfExists("jwbd", loader);
+        if (flags == null) {
+            log("jwbd Find My Device flags not found for self location reporting");
+            return;
+        }
+
+        String key = flags.getName() + "#j:enableSelfLocationReporting";
+        if (!HOOKED.add(key)) {
+            return;
+        }
+
+        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
+                flags,
+                "j",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (param.hasThrowable() || !(param.getResult() instanceof Boolean)) {
+                            return;
+                        }
+                        boolean original = (Boolean) param.getResult();
+                        if (!original) {
+                            param.setResult(true);
+                        }
+                        log("Find Hub flag enable_self_location_reporting original="
+                                + original + " effective=true");
+                    }
+                });
+
+        log("hooked " + key + " overloads=" + unhooks.size());
     }
 
     /**
