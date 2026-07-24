@@ -47,10 +47,53 @@ public final class FastPairHook implements IXposedHookLoadPackage {
 
         log("loaded process=" + lpparam.processName);
         keepHalfSheetComponentEnabled();
+        hookSpotFastPairServerFlag(lpparam.classLoader);
         hookFinalDecision(lpparam.classLoader);
         hookLocatorTagEligibility(lpparam.classLoader);
         hookEligibilityPredicates(lpparam.classLoader);
         hookInitialPairingObserver(lpparam.classLoader);
+    }
+
+    /**
+     * FastPairApiChimeraService.a(dcrx, GetServiceRequest) only publishes the
+     * SPOT binder when jwbd.g() is true. In GMS 26.26.34 this method reads:
+     *
+     * EnableFindMyDeviceModule__enable_fast_pair_accessories
+     *
+     * CN device policy currently supplies false, causing the broker to return
+     * API_UNAVAILABLE before any SPOT method can run.
+     */
+    private static void hookSpotFastPairServerFlag(ClassLoader loader) {
+        Class<?> flags = XposedHelpers.findClassIfExists("jwbd", loader);
+        if (flags == null) {
+            log("jwbd Find My Device flags not found");
+            return;
+        }
+
+        String key = flags.getName() + "#g:enableSpotFastPair";
+        if (!HOOKED.add(key)) {
+            return;
+        }
+
+        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
+                flags,
+                "g",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (param.hasThrowable() || !(param.getResult() instanceof Boolean)) {
+                            return;
+                        }
+                        boolean original = (Boolean) param.getResult();
+                        if (!original) {
+                            param.setResult(true);
+                        }
+                        log("SPOT server flag enable_fast_pair_accessories original="
+                                + original + " effective=true");
+                    }
+                });
+
+        log("hooked " + key + " overloads=" + unhooks.size());
     }
 
     private static void keepHalfSheetComponentEnabled() {
