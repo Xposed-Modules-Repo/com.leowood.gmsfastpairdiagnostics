@@ -48,10 +48,51 @@ public final class FastPairHook implements IXposedHookLoadPackage {
         log("loaded process=" + lpparam.processName);
         keepHalfSheetComponentEnabled();
         hookSpotFastPairServerFlag(lpparam.classLoader);
+        hookFastPairSpotIntegrationFlag(lpparam.classLoader);
         hookFinalDecision(lpparam.classLoader);
         hookLocatorTagEligibility(lpparam.classLoader);
         hookEligibilityPredicates(lpparam.classLoader);
         hookInitialPairingObserver(lpparam.classLoader);
+    }
+
+    /**
+     * dqqi.C(dreq), used again by the locator-tag success screen, starts with
+     * jyxk.K(). That method reads enable_fast_pair_spot_integration, whose
+     * default/current value on the CN build is false. Bypassing only the
+     * earlier eligibility result is insufficient because the success screen
+     * performs this independent check after the BLE pairing has completed.
+     */
+    private static void hookFastPairSpotIntegrationFlag(ClassLoader loader) {
+        Class<?> flags = XposedHelpers.findClassIfExists("jyxk", loader);
+        if (flags == null) {
+            log("jyxk Fast Pair flags not found");
+            return;
+        }
+
+        String key = flags.getName() + "#K:enableFastPairSpotIntegration";
+        if (!HOOKED.add(key)) {
+            return;
+        }
+
+        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
+                flags,
+                "K",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (param.hasThrowable() || !(param.getResult() instanceof Boolean)) {
+                            return;
+                        }
+                        boolean original = (Boolean) param.getResult();
+                        if (!original) {
+                            param.setResult(true);
+                        }
+                        log("Fast Pair flag enable_fast_pair_spot_integration original="
+                                + original + " effective=true");
+                    }
+                });
+
+        log("hooked " + key + " overloads=" + unhooks.size());
     }
 
     /**
