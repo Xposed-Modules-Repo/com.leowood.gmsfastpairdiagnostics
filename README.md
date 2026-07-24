@@ -18,11 +18,16 @@ The initial target is Google Play services
 checks after a scan has already passed the half-sheet eligibility decision.
 The final scan result is produced by `drgg.g(dreq)`.
 
-Version 0.2.0 also hooks the locator-tag handler `drhl.e(dreq)`. For Xiaomi Tag
+Version 0.2.0 hooks the locator-tag handler `drhl.e(dreq)`. For Xiaomi Tag
 model ID `15D23E` only, it changes that handler's
 `DEVICE_NOT_SUPPORTED` result to `SUCCESS`, allowing the original
 `drgg.g(dreq)` method to continue and launch the half-sheet. Other models and
 other eligibility checks are unchanged.
+
+Version 0.3.0 additionally prevents Google Play services from disabling its own
+Fast Pair `HalfSheetActivity`. On the affected CN build, GMS disables that
+component immediately after the half-sheet is drawn, causing the activity to
+close and subsequent launches to fail with `ActivityNotFoundException`.
 
 ## Build
 

@@ -1,5 +1,8 @@
 package com.leowood.gmsfastpairdiagnostics;
 
+import android.content.ComponentName;
+import android.content.pm.PackageManager;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -24,6 +27,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class FastPairHook implements IXposedHookLoadPackage {
     private static final String TAG = "[GmsFastPairDiag] ";
     private static final String TARGET_MODEL_ID = "15d23e";
+    private static final String HALF_SHEET_COMPONENT =
+            "com.google.android.gms.nearby.discovery.fastpair.HalfSheetActivity";
     private static final int DEVICE_NOT_SUPPORTED = 11;
     private static final int SUCCESS = 15;
     private static final Pattern MAC =
@@ -37,10 +42,53 @@ public final class FastPairHook implements IXposedHookLoadPackage {
         }
 
         log("loaded process=" + lpparam.processName);
+        keepHalfSheetComponentEnabled();
         hookFinalDecision(lpparam.classLoader);
         hookLocatorTagEligibility(lpparam.classLoader);
         hookEligibilityPredicates(lpparam.classLoader);
         hookInitialPairingObserver(lpparam.classLoader);
+    }
+
+    private static void keepHalfSheetComponentEnabled() {
+        Class<?> packageManager = XposedHelpers.findClassIfExists(
+                "android.app.ApplicationPackageManager",
+                null);
+        if (packageManager == null) {
+            log("ApplicationPackageManager not found");
+            return;
+        }
+
+        String key = packageManager.getName() + "#setComponentEnabledSetting";
+        if (!HOOKED.add(key)) {
+            return;
+        }
+
+        XposedHelpers.findAndHookMethod(
+                packageManager,
+                "setComponentEnabledSetting",
+                ComponentName.class,
+                int.class,
+                int.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        ComponentName component = (ComponentName) param.args[0];
+                        int state = (Integer) param.args[1];
+                        if (component == null
+                                || !"com.google.android.gms".equals(component.getPackageName())
+                                || !HALF_SHEET_COMPONENT.equals(component.getClassName())
+                                || state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                                || state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) {
+                            return;
+                        }
+
+                        log("blocked GMS from disabling " + HALF_SHEET_COMPONENT
+                                + " state=" + state);
+                        param.setResult(null);
+                    }
+                });
+
+        log("hooked " + key);
     }
 
     private static void hookFinalDecision(ClassLoader loader) {
