@@ -29,6 +29,20 @@ jobs:
           path: /home/runner/.android/debug.keystore
           key: android-debug-keystore-v1
 
+      - name: Create debug signing key when absent
+        run: |
+          if [ ! -f /home/runner/.android/debug.keystore ]; then
+            keytool -genkeypair \
+              -keystore /home/runner/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Build LSPosed APK
         run: gradle :app:assembleDebug
 
