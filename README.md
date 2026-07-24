@@ -1,4 +1,4 @@
-# 小米 Tag / Google Find Hub LSPosed 修复
+# Xiaomi Tag · Find Hub 修复（LSPosed）
 
 这是一个针对国行小米手机的实验性 LSPosed 模块，用来恢复 Google Play 服务中的 Fast Pair / Find Hub（查找中心）配对流程，并诊断 Find Hub 在中国大陆显示 Xiaomi Tag 时的地图坐标偏移。
 
@@ -16,7 +16,7 @@
 
 ## 下载与安装
 
-从 [Releases](https://github.com/leowood2000/gms-fastpair-lsposed/releases/latest) 下载 APK，然后：
+从 [Releases](https://github.com/leowood2000/xiaomi-tag-find-hub-lsposed/releases/latest) 下载 APK，然后：
 
 1. 安装 APK。
 2. 在 LSPosed 中启用本模块。
@@ -135,3 +135,8 @@ GitHub Actions 也会构建 APK，并将其作为 workflow artifact 上传。
 
 `v0.9.2` 增加地图类型感知：默认/地形矢量图使用 GCJ-02，
 卫星/混合卫星图恢复并使用 WGS-84，切换图层时不会累计转换。
+
+`v0.9.3` 将仓库、LSPosed 模块和 APK 统一命名为
+`Xiaomi Tag · Find Hub 修复`。内部包名仍保留
+`com.leowood.gmsfastpairdiagnostics`，确保旧版本可以直接覆盖升级，
+无需重新配置 LSPosed 作用域。

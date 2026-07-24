@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:allowBackup="false"
-        android:label="GMS Fast Pair Diagnostics"
+        android:label="Xiaomi Tag · Find Hub 修复"
         android:supportsRtl="true">
 
         <meta-data
@@ -10,7 +10,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Fixes GMS Fast Pair eligibility and diagnoses Find Hub map coordinates." />
+            android:value="修复国行 Android 上 Xiaomi Tag 配对和 Find Hub 地图坐标偏移。" />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />

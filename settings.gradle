@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GmsFastPairDiagnostics"
+rootProject.name = "XiaomiTagFindHubFix"
 include(":app")
