@@ -29,6 +29,16 @@ jobs:
           path: /home/runner/.android/debug.keystore
           key: android-debug-keystore-v1
 
+      - name: Install canonical debug signing key
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_DEBUG_KEYSTORE_BASE64" ]; then
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" \
+              | base64 --decode \
+              > /home/runner/.android/debug.keystore
+          fi
+
       - name: Create debug signing key when absent
         run: |
           if [ ! -f /home/runner/.android/debug.keystore ]; then
