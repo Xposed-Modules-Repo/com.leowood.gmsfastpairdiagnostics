@@ -4,9 +4,9 @@ import android.location.Location;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
@@ -81,10 +81,11 @@ final class FindHubMapHook {
      * A location proto may be passed through the UI pipeline more than once.
      * Identity tracking prevents an accidental second nonlinear conversion.
      */
-    private static final Set<Object> CONVERTED =
-            Collections.newSetFromMap(new WeakHashMap<>());
+    private static final Map<Object, Coordinate> ORIGINAL_COORDINATES =
+            new WeakHashMap<>();
     private static final ThreadLocal<Boolean> READING_LOCATION =
             new ThreadLocal<>();
+    private static volatile int currentMapType = 1;
 
     private FindHubMapHook() {
     }
@@ -110,7 +111,54 @@ final class FindHubMapHook {
                     }
                 });
         log("loaded process=" + processName + " hfo#aN overloads=" + hooks.size());
+        hookMapType(loader);
         hookMapLocationLayer();
+    }
+
+    private static void hookMapType(ClassLoader loader) {
+        Class<?> googleMap = XposedHelpers.findClassIfExists("ill", loader);
+        if (googleMap == null) {
+            log("map type wrapper ill not found");
+            return;
+        }
+        XposedBridge.hookAllMethods(
+                googleMap,
+                "b",
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args != null && param.args.length == 1
+                                && param.args[0] instanceof Integer) {
+                            currentMapType = (Integer) param.args[0];
+                            updateRememberedPointsForMapType();
+                            log("map type=" + currentMapType
+                                    + " satellite=" + isSatelliteMap());
+                        }
+                    }
+                });
+    }
+
+    private static void updateRememberedPointsForMapType() {
+        synchronized (ORIGINAL_COORDINATES) {
+            for (Map.Entry<Object, Coordinate> entry
+                    : ORIGINAL_COORDINATES.entrySet()) {
+                Object point = entry.getKey();
+                Coordinate original = entry.getValue();
+                if (point == null || original == null) {
+                    continue;
+                }
+                try {
+                    Coordinate display = isSatelliteMap()
+                            ? original
+                            : wgs84ToGcj02(
+                                    original.latitude, original.longitude);
+                    setDouble(point, "b", display.latitude);
+                    setDouble(point, "c", display.longitude);
+                } catch (Throwable error) {
+                    log("cannot update remembered marker: " + error);
+                }
+            }
+        }
     }
 
     /**
@@ -133,6 +181,7 @@ final class FindHubMapHook {
                         if (param.hasThrowable()
                                 || !(param.getResult() instanceof Number)
                                 || Boolean.TRUE.equals(READING_LOCATION.get())
+                                || isSatelliteMap()
                                 || !isGoogleMapLocationCall()) {
                             return;
                         }
@@ -180,20 +229,34 @@ final class FindHubMapHook {
                 Object marker = iterator.next();
                 Object locationWithAccuracy = getField(marker, "b");
                 Object point = getField(locationWithAccuracy, "c");
-                if (point == null || wasConverted(point)) {
+                if (point == null) {
                     continue;
                 }
 
-                double latitude = getDouble(point, "b");
-                double longitude = getDouble(point, "c");
+                Coordinate original = getOriginal(point);
+                if (isSatelliteMap()) {
+                    if (original != null) {
+                        setDouble(point, "b", original.latitude);
+                        setDouble(point, "c", original.longitude);
+                    }
+                    continue;
+                }
+
+                double latitude = original != null
+                        ? original.latitude : getDouble(point, "b");
+                double longitude = original != null
+                        ? original.longitude : getDouble(point, "c");
                 if (!isGcj02Region(latitude, longitude)) {
                     continue;
                 }
 
                 Coordinate result = wgs84ToGcj02(latitude, longitude);
+                if (original == null) {
+                    rememberOriginal(
+                            point, new Coordinate(latitude, longitude));
+                }
                 setDouble(point, "b", result.latitude);
                 setDouble(point, "c", result.longitude);
-                markConverted(point);
                 converted++;
                 log("marker " + format(latitude) + "," + format(longitude)
                         + " -> " + format(result.latitude) + ","
@@ -237,15 +300,19 @@ final class FindHubMapHook {
         field.setDouble(target, value);
     }
 
-    private static boolean wasConverted(Object point) {
-        synchronized (CONVERTED) {
-            return CONVERTED.contains(point);
+    private static boolean isSatelliteMap() {
+        return currentMapType == 2 || currentMapType == 4;
+    }
+
+    private static Coordinate getOriginal(Object point) {
+        synchronized (ORIGINAL_COORDINATES) {
+            return ORIGINAL_COORDINATES.get(point);
         }
     }
 
-    private static void markConverted(Object point) {
-        synchronized (CONVERTED) {
-            CONVERTED.add(point);
+    private static void rememberOriginal(Object point, Coordinate original) {
+        synchronized (ORIGINAL_COORDINATES) {
+            ORIGINAL_COORDINATES.put(point, original);
         }
     }
 
