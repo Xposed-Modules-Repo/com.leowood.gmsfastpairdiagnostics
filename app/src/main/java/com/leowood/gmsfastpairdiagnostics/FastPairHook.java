@@ -41,6 +41,11 @@ public final class FastPairHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
+        if ("com.google.android.apps.adm".equals(lpparam.packageName)) {
+            FindHubMapHook.install(lpparam.classLoader, lpparam.processName);
+            return;
+        }
+
         if (!"com.google.android.gms".equals(lpparam.packageName)) {
             return;
         }

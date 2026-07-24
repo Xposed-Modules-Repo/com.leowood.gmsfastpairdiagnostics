@@ -1,6 +1,6 @@
 # 小米 Tag / Google Find Hub LSPosed 修复
 
-这是一个针对国行小米手机的实验性 LSPosed 模块，用来恢复 Google Play 服务中的 Fast Pair / Find Hub（查找中心）配对流程。
+这是一个针对国行小米手机的实验性 LSPosed 模块，用来恢复 Google Play 服务中的 Fast Pair / Find Hub（查找中心）配对流程，并诊断 Find Hub 在中国大陆显示 Xiaomi Tag 时的地图坐标偏移。
 
 本项目已经在以下环境中完整跑通：手机发现 Xiaomi Tag、弹出配对页面、完成连接，并成功打开“储存最新的位置信息”。
 
@@ -20,7 +20,9 @@
 
 1. 安装 APK。
 2. 在 LSPosed 中启用本模块。
-3. 模块作用域只勾选 **Google Play 服务**（`com.google.android.gms`）。
+3. 在 LSPosed 中勾选以下作用域：
+   - **Google Play 服务**（`com.google.android.gms`），用于 Fast Pair / Find Hub 配对修复。
+   - **Find Hub**（`com.google.android.apps.adm`），用于地图坐标诊断。
 4. 重启手机。
 5. 让 Tag 重新进入配对模式；确认听到两声后，将它靠近手机。
 6. 按照 Google Fast Pair / Find Hub 页面完成连接。
@@ -76,6 +78,17 @@ adb logcat -s LSPosedFramework | findstr GmsFastPairDiag
 - `bypass drhl#e DEVICE_NOT_SUPPORTED -> SUCCESS`
 - 被 GMS 禁用但由模块保留的 Fast Pair 组件
 
+地图诊断日志使用独立标签：
+
+```powershell
+adb logcat -c
+adb shell am force-stop com.google.android.apps.adm
+adb shell monkey -p com.google.android.apps.adm 1
+adb logcat -v time | Select-String FindHubMapDiag
+```
+
+`v0.8.0` 只记录 Find Hub 传给 Google Maps SDK 的 Marker 和相机坐标及其调用堆栈，不修改任何经纬度。采集这些日志是为了确认 Xiaomi Tag 标点对应的混淆调用点；在确认之前不应全局 Hook `LatLng`，否则可能同时影响手机位置、地图相机和国外坐标。
+
 ## 编译
 
 需要 JDK 17、Android SDK，以及 Gradle 8.9：
@@ -96,3 +109,5 @@ GitHub Actions 也会构建 APK，并将其作为 workflow artifact 上传。
 ## 版本
 
 `v0.7.0` 是首个完成全流程验证的版本，包含三个 Find Hub 开关、定位 Tag 资格修复以及 Fast Pair 组件保护。
+
+`v0.8.0` 增加 Find Hub 应用作用域和只读地图坐标诊断，为后续仅针对中国大陆 Tag 标点的 WGS-84 → GCJ-02 修正定位调用点。

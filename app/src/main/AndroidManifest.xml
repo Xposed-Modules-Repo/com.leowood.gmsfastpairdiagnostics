@@ -10,7 +10,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Diagnoses Google Fast Pair eligibility decisions on GMS 26.26.34." />
+            android:value="Fixes GMS Fast Pair eligibility and diagnoses Find Hub map coordinates." />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
