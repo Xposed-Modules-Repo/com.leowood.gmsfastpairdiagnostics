@@ -2,349 +2,209 @@ package com.leowood.gmsfastpairdiagnostics;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * Read-only coordinate diagnostics for the Google Find Hub app.
+ * Corrects Find Hub's WGS-84 device coordinates at its map UI boundary.
  *
- * <p>This intentionally does not transform coordinates. It records the stable
- * Google Maps SDK entry points used for markers and camera movement so the
- * Find Hub call site for a locator tag can be identified before a narrowly
- * scoped WGS-84 -> GCJ-02 correction is enabled.</p>
+ * <p>The hook is deliberately limited to the obfuscated Find Hub 3.1.636-1
+ * marker pipeline. It does not alter Android Location, GMS, stored locations,
+ * network requests, or coordinates outside the GCJ-02 coverage guard.</p>
  */
 final class FindHubMapHook {
-    private static final String TAG = "[FindHubMapDiag] ";
-    private static final int MAX_EVENTS = 200;
-    private static final Set<String> HOOKED = new HashSet<>();
-    private static final Set<String> LOGGED_EVENTS = new HashSet<>();
-    private static int eventCount;
+    private static final String TAG = "[FindHubMapFix] ";
+    private static final double PI = Math.PI;
+    private static final double EARTH_SEMI_MAJOR_AXIS = 6378245.0;
+    private static final double ECCENTRICITY_SQUARED = 0.00669342162296594323;
+
+    /**
+     * A location proto may be passed through the UI pipeline more than once.
+     * Identity tracking prevents an accidental second nonlinear conversion.
+     */
+    private static final Set<Object> CONVERTED =
+            Collections.newSetFromMap(new WeakHashMap<>());
 
     private FindHubMapHook() {
     }
 
     static void install(ClassLoader loader, String processName) {
-        log("loaded process=" + processName);
-        hookLatLngConstructors(loader);
-        hookCameraPositionConstructors(loader);
-        hookLatLngArgument(
-                loader,
-                "com.google.android.gms.maps.model.MarkerOptions",
-                "position",
-                "MarkerOptions.position");
-        hookLatLngArgument(
-                loader,
-                "com.google.android.gms.maps.model.Marker",
-                "setPosition",
-                "Marker.setPosition");
-        hookLatLngArgument(
-                loader,
-                "com.google.android.gms.maps.CameraUpdateFactory",
-                "newLatLng",
-                "CameraUpdateFactory.newLatLng");
-        hookLatLngArgument(
-                loader,
-                "com.google.android.gms.maps.CameraUpdateFactory",
-                "newLatLngZoom",
-                "CameraUpdateFactory.newLatLngZoom");
-        hookCameraPosition(loader);
-    }
-
-    private static void hookLatLngConstructors(ClassLoader loader) {
-        Class<?> latLng = XposedHelpers.findClassIfExists(
-                "com.google.android.gms.maps.model.LatLng", loader);
-        if (latLng == null) {
-            log("LatLng class not found");
+        Class<?> fragment = XposedHelpers.findClassIfExists("hfo", loader);
+        if (fragment == null) {
+            log("unsupported Find Hub build: hfo not found");
             return;
         }
 
-        String key = latLng.getName() + "#<init>";
-        synchronized (HOOKED) {
-            if (!HOOKED.add(key)) {
-                return;
-            }
-        }
-
-        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllConstructors(
-                latLng,
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        Coordinate coordinate = readLatLngConstructorArgs(param.args);
-                        if (coordinate == null) {
-                            coordinate = readCoordinate(param.thisObject);
-                        }
-                        if (coordinate != null) {
-                            record("LatLng.<init>", coordinate, param.method);
-                        }
-                    }
-                });
-        log("hooked " + key + " overloads=" + unhooks.size());
-    }
-
-    private static void hookCameraPositionConstructors(ClassLoader loader) {
-        Class<?> cameraPosition = XposedHelpers.findClassIfExists(
-                "com.google.android.gms.maps.model.CameraPosition", loader);
-        if (cameraPosition == null) {
-            log("CameraPosition class not found");
-            return;
-        }
-
-        String key = cameraPosition.getName() + "#<init>";
-        synchronized (HOOKED) {
-            if (!HOOKED.add(key)) {
-                return;
-            }
-        }
-
-        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllConstructors(
-                cameraPosition,
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        Coordinate coordinate = findCoordinate(param.args);
-                        if (coordinate == null) {
-                            coordinate = findNestedCoordinate(param.thisObject);
-                        }
-                        if (coordinate != null) {
-                            record("CameraPosition.<init>", coordinate, param.method);
-                        }
-                    }
-                });
-        log("hooked " + key + " overloads=" + unhooks.size());
-    }
-
-    private static void hookLatLngArgument(
-            ClassLoader loader, String className, String methodName, String source) {
-        Class<?> target = XposedHelpers.findClassIfExists(className, loader);
-        if (target == null) {
-            log("class not found " + className);
-            return;
-        }
-
-        String key = className + "#" + methodName;
-        synchronized (HOOKED) {
-            if (!HOOKED.add(key)) {
-                return;
-            }
-        }
-
-        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
-                target,
-                methodName,
+        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(
+                fragment,
+                "aN",
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
-                        Coordinate coordinate = findCoordinate(param.args);
-                        if (coordinate != null) {
-                            record(source, coordinate, param.method);
-                        }
-                    }
-                });
-        log("hooked " + key + " overloads=" + unhooks.size());
-        if (unhooks.isEmpty()) {
-            logDeclaredMethods(target);
-        }
-    }
-
-    private static void hookCameraPosition(ClassLoader loader) {
-        Class<?> factory = XposedHelpers.findClassIfExists(
-                "com.google.android.gms.maps.CameraUpdateFactory", loader);
-        if (factory == null) {
-            return;
-        }
-
-        String key = factory.getName() + "#newCameraPosition";
-        synchronized (HOOKED) {
-            if (!HOOKED.add(key)) {
-                return;
-            }
-        }
-
-        Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
-                factory,
-                "newCameraPosition",
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        if (param.args == null || param.args.length == 0
+                        if (param.args == null || param.args.length != 1
                                 || param.args[0] == null) {
                             return;
                         }
-                        Object target = readField(param.args[0], "target");
-                        Coordinate coordinate = readCoordinate(target);
-                        if (coordinate != null) {
-                            record(
-                                    "CameraUpdateFactory.newCameraPosition",
-                                    coordinate,
-                                    param.method);
-                        }
+                        convertMarkerCollection(param.args[0]);
                     }
                 });
-        log("hooked " + key + " overloads=" + unhooks.size());
+        log("loaded process=" + processName + " hfo#aN overloads=" + hooks.size());
     }
 
-    private static Coordinate findCoordinate(Object[] args) {
-        if (args == null) {
-            return null;
-        }
-        for (Object arg : args) {
-            Coordinate coordinate = readCoordinate(arg);
-            if (coordinate != null) {
-                return coordinate;
-            }
-        }
-        return null;
-    }
-
-    private static Coordinate readCoordinate(Object value) {
-        if (value == null
-                || !"com.google.android.gms.maps.model.LatLng"
-                .equals(value.getClass().getName())) {
-            return null;
-        }
-        List<Double> values = new ArrayList<>(2);
-        for (Field field : value.getClass().getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())
-                    || (field.getType() != double.class
-                    && field.getType() != Double.class)) {
-                continue;
-            }
-            try {
-                field.setAccessible(true);
-                Object number = field.get(value);
-                if (number instanceof Number) {
-                    values.add(((Number) number).doubleValue());
+    private static void convertMarkerCollection(Object collection) {
+        int converted = 0;
+        try {
+            Iterator<?> iterator = iteratorOf(collection);
+            while (iterator.hasNext()) {
+                Object marker = iterator.next();
+                Object locationWithAccuracy = getField(marker, "b");
+                Object point = getField(locationWithAccuracy, "c");
+                if (point == null || wasConverted(point)) {
+                    continue;
                 }
-            } catch (Throwable ignored) {
-                // Try the remaining obfuscated fields.
+
+                double latitude = getDouble(point, "b");
+                double longitude = getDouble(point, "c");
+                if (!isGcj02Region(latitude, longitude)) {
+                    continue;
+                }
+
+                Coordinate result = wgs84ToGcj02(latitude, longitude);
+                setDouble(point, "b", result.latitude);
+                setDouble(point, "c", result.longitude);
+                markConverted(point);
+                converted++;
+                log("marker " + format(latitude) + "," + format(longitude)
+                        + " -> " + format(result.latitude) + ","
+                        + format(result.longitude));
             }
+        } catch (Throwable error) {
+            log("marker conversion failed: " + error);
         }
-        if (values.size() < 2) {
-            return null;
+        if (converted > 0) {
+            log("converted markers=" + converted);
         }
-        return new Coordinate(values.get(0), values.get(1));
     }
 
-    private static Coordinate readLatLngConstructorArgs(Object[] args) {
-        if (args == null || args.length < 2
-                || !(args[0] instanceof Number)
-                || !(args[1] instanceof Number)) {
-            return null;
+    private static Iterator<?> iteratorOf(Object collection) throws Exception {
+        if (collection instanceof Iterable<?>) {
+            return ((Iterable<?>) collection).iterator();
         }
-        double latitude = ((Number) args[0]).doubleValue();
-        double longitude = ((Number) args[1]).doubleValue();
-        if (latitude < -90.0 || latitude > 90.0
-                || longitude < -180.0 || longitude > 180.0) {
-            return null;
-        }
-        return new Coordinate(latitude, longitude);
+        Method iterator = collection.getClass().getMethod("iterator");
+        return (Iterator<?>) iterator.invoke(collection);
     }
 
-    private static Coordinate findNestedCoordinate(Object target) {
+    private static Object getField(Object target, String name) throws Exception {
         if (target == null) {
             return null;
         }
-        for (Field field : target.getClass().getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            try {
-                field.setAccessible(true);
-                Coordinate coordinate = readCoordinate(field.get(target));
-                if (coordinate != null) {
-                    return coordinate;
-                }
-            } catch (Throwable ignored) {
-                // Try the remaining obfuscated fields.
-            }
-        }
-        return null;
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 
-    private static Object readField(Object target, String name) {
-        try {
-            Field field = target.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.get(target);
-        } catch (Throwable error) {
-            log("cannot read " + target.getClass().getName() + "." + name
-                    + ": " + error);
-            return null;
+    private static double getDouble(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.getDouble(target);
+    }
+
+    private static void setDouble(Object target, String name, double value)
+            throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setDouble(target, value);
+    }
+
+    private static boolean wasConverted(Object point) {
+        synchronized (CONVERTED) {
+            return CONVERTED.contains(point);
         }
     }
 
-    private static void record(String source, Coordinate coordinate, Object method) {
-        String eventKey = source + ":"
-                + String.format(Locale.US, "%.5f,%.5f",
-                coordinate.latitude, coordinate.longitude);
-        synchronized (LOGGED_EVENTS) {
-            if (eventCount >= MAX_EVENTS || !LOGGED_EVENTS.add(eventKey)) {
-                return;
-            }
-            eventCount++;
+    private static void markConverted(Object point) {
+        synchronized (CONVERTED) {
+            CONVERTED.add(point);
         }
-
-        String signature = method instanceof Method
-                ? ((Method) method).toGenericString()
-                : String.valueOf(method);
-        log(source
-                + " lat=" + format(coordinate.latitude)
-                + " lon=" + format(coordinate.longitude)
-                + " mainlandCandidate=" + isMainlandCandidate(
-                coordinate.latitude, coordinate.longitude)
-                + " method=" + signature);
-        log("callers:\n" + relevantStack());
     }
 
     /**
-     * Deliberately broad diagnostic filter. A production correction must use a
-     * mainland polygon and explicit exclusions instead of this rectangle.
+     * The conventional GCJ-02 coverage check, with explicit HK/Macau/Taiwan
+     * exclusions. Coordinates outside it are returned completely unchanged.
      */
-    private static boolean isMainlandCandidate(double latitude, double longitude) {
-        return longitude >= 72.004
-                && longitude <= 137.8347
-                && latitude >= 0.8293
-                && latitude <= 55.8271;
+    private static boolean isGcj02Region(double latitude, double longitude) {
+        if (longitude < 72.004 || longitude > 137.8347
+                || latitude < 0.8293 || latitude > 55.8271) {
+            return false;
+        }
+        // Hong Kong
+        if (latitude >= 22.08 && latitude <= 22.58
+                && longitude >= 113.82 && longitude <= 114.52) {
+            return false;
+        }
+        // Macau
+        if (latitude >= 22.06 && latitude <= 22.23
+                && longitude >= 113.52 && longitude <= 113.64) {
+            return false;
+        }
+        // Taiwan
+        return !(latitude >= 21.80 && latitude <= 25.45
+                && longitude >= 119.30 && longitude <= 122.10);
     }
 
-    private static String relevantStack() {
-        StringBuilder out = new StringBuilder();
-        StackTraceElement[] frames = new Throwable().getStackTrace();
-        int written = 0;
-        for (StackTraceElement frame : frames) {
-            String className = frame.getClassName();
-            if (className.equals(FindHubMapHook.class.getName())
-                    || className.startsWith("de.robv.android.xposed.")
-                    || className.startsWith("com.google.android.gms.maps.")) {
-                continue;
-            }
-            out.append("  at ").append(frame).append('\n');
-            if (++written >= 18) {
-                break;
-            }
-        }
-        return out.toString();
+    private static Coordinate wgs84ToGcj02(double latitude, double longitude) {
+        double latitudeDelta = transformLatitude(
+                longitude - 105.0, latitude - 35.0);
+        double longitudeDelta = transformLongitude(
+                longitude - 105.0, latitude - 35.0);
+        double latitudeRadians = latitude / 180.0 * PI;
+        double sinLatitude = Math.sin(latitudeRadians);
+        double magic = 1.0 - ECCENTRICITY_SQUARED
+                * sinLatitude * sinLatitude;
+        double squareRootMagic = Math.sqrt(magic);
+        latitudeDelta = latitudeDelta * 180.0
+                / ((EARTH_SEMI_MAJOR_AXIS
+                * (1.0 - ECCENTRICITY_SQUARED))
+                / (magic * squareRootMagic) * PI);
+        longitudeDelta = longitudeDelta * 180.0
+                / (EARTH_SEMI_MAJOR_AXIS / squareRootMagic
+                * Math.cos(latitudeRadians) * PI);
+        return new Coordinate(
+                latitude + latitudeDelta,
+                longitude + longitudeDelta);
     }
 
-    private static void logDeclaredMethods(Class<?> target) {
-        StringBuilder methods = new StringBuilder();
-        int written = 0;
-        for (Method method : target.getDeclaredMethods()) {
-            methods.append("  ").append(method.toGenericString()).append('\n');
-            if (++written >= 40) {
-                break;
-            }
-        }
-        log("declared methods for " + target.getName() + ":\n" + methods);
+    private static double transformLatitude(double x, double y) {
+        double result = -100.0 + 2.0 * x + 3.0 * y
+                + 0.2 * y * y + 0.1 * x * y
+                + 0.2 * Math.sqrt(Math.abs(x));
+        result += (20.0 * Math.sin(6.0 * x * PI)
+                + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+        result += (20.0 * Math.sin(y * PI)
+                + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+        result += (160.0 * Math.sin(y / 12.0 * PI)
+                + 320.0 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+        return result;
+    }
+
+    private static double transformLongitude(double x, double y) {
+        double result = 300.0 + x + 2.0 * y
+                + 0.1 * x * x + 0.1 * x * y
+                + 0.1 * Math.sqrt(Math.abs(x));
+        result += (20.0 * Math.sin(6.0 * x * PI)
+                + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+        result += (20.0 * Math.sin(x * PI)
+                + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+        result += (150.0 * Math.sin(x / 12.0 * PI)
+                + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+        return result;
     }
 
     private static String format(double value) {

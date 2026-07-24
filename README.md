@@ -78,16 +78,20 @@ adb logcat -s LSPosedFramework | findstr GmsFastPairDiag
 - `bypass drhl#e DEVICE_NOT_SUPPORTED -> SUCCESS`
 - 被 GMS 禁用但由模块保留的 Fast Pair 组件
 
-地图诊断日志使用独立标签：
+地图修正日志使用独立标签：
 
 ```powershell
 adb logcat -c
 adb shell am force-stop com.google.android.apps.adm
 adb shell monkey -p com.google.android.apps.adm 1
-adb logcat -v time | Select-String FindHubMapDiag
+adb logcat -v time | Select-String FindHubMapFix
 ```
 
-`v0.8.0` 只记录 Find Hub 传给 Google Maps SDK 的 Marker 和相机坐标及其调用堆栈，不修改任何经纬度。采集这些日志是为了确认 Xiaomi Tag 标点对应的混淆调用点；在确认之前不应全局 Hook `LatLng`，否则可能同时影响手机位置、地图相机和国外坐标。
+`v0.9.0` 在 Find Hub 的地图 UI 边界对 Marker 模型执行完整的
+WGS-84 → GCJ-02 非线性转换。Marker 与后续相机聚焦读取同一份坐标，
+所以二者会保持一致。该 Hook 不修改 Android `Location`、GMS 定位、
+网络请求或云端保存的数据；常规 GCJ-02 覆盖范围外的坐标保持不变，
+并显式排除香港、澳门和台湾。
 
 ## 编译
 
@@ -102,6 +106,7 @@ GitHub Actions 也会构建 APK，并将其作为 workflow artifact 上传。
 ## 兼容性与风险
 
 - 本模块依赖 Google Play 服务 `26.26.34` 中的混淆类名和方法名。GMS 更新后这些名称可能变化，模块可能失效。
+- 地图修正依赖 Find Hub `3.1.636-1` 的混淆类 `hfo` 及其 `aN` 方法；Find Hub 更新后需重新确认调用点。
 - 目前只对 `15D23E` 做了资格绕过；国行版 Xiaomi Tag 或其他 tracker 是否使用相同 model ID，需要单独验证。
 - 开启 self-location reporting 后，Find Hub 会按照 Google 的产品机制保存或上报设备的最后位置。请只在理解该功能并接受其隐私影响时使用。
 - Root、LSPosed、修改 Google Play 服务行为均有风险。本项目仅用于研究与个人测试，不保证适用于所有设备，也不保证通过任何完整性检查。
@@ -111,3 +116,5 @@ GitHub Actions 也会构建 APK，并将其作为 workflow artifact 上传。
 `v0.7.0` 是首个完成全流程验证的版本，包含三个 Find Hub 开关、定位 Tag 资格修复以及 Fast Pair 组件保护。
 
 `v0.8.0` 增加 Find Hub 应用作用域和只读地图坐标诊断，为后续仅针对中国大陆 Tag 标点的 WGS-84 → GCJ-02 修正定位调用点。
+
+`v0.9.0` 将已确认的标签 Marker/相机 UI 管线接入完整 WGS-84 → GCJ-02 算法，并增加境外保护和重复转换保护。
