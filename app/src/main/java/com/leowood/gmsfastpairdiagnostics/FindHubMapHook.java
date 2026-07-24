@@ -2,7 +2,10 @@ package com.leowood.gmsfastpairdiagnostics;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -75,7 +78,10 @@ final class FindHubMapHook {
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
-                        Coordinate coordinate = readCoordinate(param.thisObject);
+                        Coordinate coordinate = readLatLngConstructorArgs(param.args);
+                        if (coordinate == null) {
+                            coordinate = readCoordinate(param.thisObject);
+                        }
                         if (coordinate != null) {
                             record("LatLng.<init>", coordinate, param.method);
                         }
@@ -104,8 +110,10 @@ final class FindHubMapHook {
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
-                        Object target = readField(param.thisObject, "target");
-                        Coordinate coordinate = readCoordinate(target);
+                        Coordinate coordinate = findCoordinate(param.args);
+                        if (coordinate == null) {
+                            coordinate = findNestedCoordinate(param.thisObject);
+                        }
                         if (coordinate != null) {
                             record("CameraPosition.<init>", coordinate, param.method);
                         }
@@ -203,14 +211,63 @@ final class FindHubMapHook {
                 .equals(value.getClass().getName())) {
             return null;
         }
-        Object latitude = readField(value, "latitude");
-        Object longitude = readField(value, "longitude");
-        if (!(latitude instanceof Number) || !(longitude instanceof Number)) {
+        List<Double> values = new ArrayList<>(2);
+        for (Field field : value.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())
+                    || (field.getType() != double.class
+                    && field.getType() != Double.class)) {
+                continue;
+            }
+            try {
+                field.setAccessible(true);
+                Object number = field.get(value);
+                if (number instanceof Number) {
+                    values.add(((Number) number).doubleValue());
+                }
+            } catch (Throwable ignored) {
+                // Try the remaining obfuscated fields.
+            }
+        }
+        if (values.size() < 2) {
             return null;
         }
-        return new Coordinate(
-                ((Number) latitude).doubleValue(),
-                ((Number) longitude).doubleValue());
+        return new Coordinate(values.get(0), values.get(1));
+    }
+
+    private static Coordinate readLatLngConstructorArgs(Object[] args) {
+        if (args == null || args.length < 2
+                || !(args[0] instanceof Number)
+                || !(args[1] instanceof Number)) {
+            return null;
+        }
+        double latitude = ((Number) args[0]).doubleValue();
+        double longitude = ((Number) args[1]).doubleValue();
+        if (latitude < -90.0 || latitude > 90.0
+                || longitude < -180.0 || longitude > 180.0) {
+            return null;
+        }
+        return new Coordinate(latitude, longitude);
+    }
+
+    private static Coordinate findNestedCoordinate(Object target) {
+        if (target == null) {
+            return null;
+        }
+        for (Field field : target.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            try {
+                field.setAccessible(true);
+                Coordinate coordinate = readCoordinate(field.get(target));
+                if (coordinate != null) {
+                    return coordinate;
+                }
+            } catch (Throwable ignored) {
+                // Try the remaining obfuscated fields.
+            }
+        }
+        return null;
     }
 
     private static Object readField(Object target, String name) {
