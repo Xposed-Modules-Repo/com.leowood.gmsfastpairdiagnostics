@@ -27,8 +27,12 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class FastPairHook implements IXposedHookLoadPackage {
     private static final String TAG = "[GmsFastPairDiag] ";
     private static final String TARGET_MODEL_ID = "15d23e";
-    private static final String HALF_SHEET_COMPONENT =
-            "com.google.android.gms.nearby.discovery.fastpair.HalfSheetActivity";
+    private static final Set<String> PROTECTED_FAST_PAIR_COMPONENTS =
+            new HashSet<>(Arrays.asList(
+                    "com.google.android.gms.nearby.discovery.fastpair.HalfSheetActivity",
+                    "com.google.android.gms.nearby.discovery.fastpair.slice.FastPairSliceProvider",
+                    "com.google.android.gms.nearby.discovery.service.DiscoveryService",
+                    "com.google.android.gms.nearby.discovery.devices.DevicesListActivity"));
     private static final int DEVICE_NOT_SUPPORTED = 11;
     private static final int SUCCESS = 15;
     private static final Pattern MAC =
@@ -76,13 +80,13 @@ public final class FastPairHook implements IXposedHookLoadPackage {
                         int state = (Integer) param.args[1];
                         if (component == null
                                 || !"com.google.android.gms".equals(component.getPackageName())
-                                || !HALF_SHEET_COMPONENT.equals(component.getClassName())
+                                || !PROTECTED_FAST_PAIR_COMPONENTS.contains(component.getClassName())
                                 || state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                                 || state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) {
                             return;
                         }
 
-                        log("blocked GMS from disabling " + HALF_SHEET_COMPONENT
+                        log("blocked GMS from disabling " + component.getClassName()
                                 + " state=" + state);
                         param.setResult(null);
                     }

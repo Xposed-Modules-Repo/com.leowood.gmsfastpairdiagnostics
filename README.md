@@ -29,6 +29,12 @@ Fast Pair `HalfSheetActivity`. On the affected CN build, GMS disables that
 component immediately after the half-sheet is drawn, causing the activity to
 close and subsequent launches to fail with `ActivityNotFoundException`.
 
+Version 0.4.0 extends that protection to the Fast Pair slice provider,
+discovery service, and devices-list activity. The slice provider is required by
+the half-sheet's connecting action; without it Android reports the
+`com.google.android.gms.nearby.fastpair` URI as unknown and the UI remains on
+"Connecting".
+
 ## Build
 
 ```text
