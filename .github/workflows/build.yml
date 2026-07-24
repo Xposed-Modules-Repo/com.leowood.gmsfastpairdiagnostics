@@ -20,10 +20,13 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Prepare debug signing directory
+        run: mkdir -p /home/runner/.android
+
       - name: Preserve debug signing key
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
+          path: /home/runner/.android/debug.keystore
           key: android-debug-keystore-v1
 
       - name: Build LSPosed APK
