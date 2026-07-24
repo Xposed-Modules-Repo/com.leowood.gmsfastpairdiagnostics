@@ -44,6 +44,8 @@ jobs:
           fi
 
       - name: Build LSPosed APK
+        env:
+          CI_DEBUG_KEYSTORE: /home/runner/.android/debug.keystore
         run: gradle :app:assembleDebug
 
       - uses: actions/upload-artifact@v4

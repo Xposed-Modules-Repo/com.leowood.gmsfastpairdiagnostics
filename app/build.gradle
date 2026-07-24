@@ -2,6 +2,8 @@ plugins {
     id "com.android.application"
 }
 
+def ciDebugKeystore = System.getenv("CI_DEBUG_KEYSTORE")
+
 android {
     namespace "com.leowood.gmsfastpairdiagnostics"
     compileSdk 35
@@ -12,6 +14,17 @@ android {
         targetSdk 35
         versionCode 8
         versionName "0.8.0"
+    }
+
+    signingConfigs {
+        if (ciDebugKeystore != null && !ciDebugKeystore.trim().isEmpty()) {
+            debug {
+                storeFile file(ciDebugKeystore)
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
+        }
     }
 
     buildTypes {
