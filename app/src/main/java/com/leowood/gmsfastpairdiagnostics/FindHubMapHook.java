@@ -87,15 +87,22 @@ final class FindHubMapHook {
     private static final Map<Object, Coordinate> ORIGINAL_COORDINATES =
             new WeakHashMap<>();
     /**
-     * Find Hub's recenter control writes a fresh copy of the selected device's
-     * raw coordinate into a separate camera-state pipeline. Remember marker
-     * pairs so only known device targets are corrected; arbitrary camera
-     * positions created by user panning remain untouched.
+     * Find Hub's recenter controls write fresh copies of selected-device or
+     * blue-dot coordinates into a separate camera-state pipeline. Remember
+     * known raw/corrected pairs so arbitrary camera positions created by user
+     * panning remain untouched.
      */
     private static final Map<String, Coordinate> MARKER_CAMERA_TARGETS =
             new HashMap<>();
     private static final Set<String> CORRECTED_CAMERA_TARGETS =
             new HashSet<>();
+    /**
+     * Camera controllers currently following Find Hub's built-in user
+     * location. Weak keys avoid retaining a controller after its screen is
+     * destroyed.
+     */
+    private static final Map<Object, Boolean> USER_LOCATION_CAMERA_STATES =
+            new WeakHashMap<>();
     private static final ThreadLocal<Boolean> READING_LOCATION =
             new ThreadLocal<>();
 
@@ -106,9 +113,11 @@ final class FindHubMapHook {
         int markerHooks = 0;
         markerHooks += hookMarkerPipeline(loader, "hwi", "aM");
         markerHooks += hookMarkerPipeline(loader, "hfo", "aN");
+        int cameraModeHooks = hookCameraModePipeline(loader, "odd", "j");
         int cameraHooks = hookDeviceCameraPipeline(loader, "odd", "n");
         log("loaded process=" + processName
                 + " markerHooks=" + markerHooks
+                + " cameraModeHooks=" + cameraModeHooks
                 + " cameraHooks=" + cameraHooks);
         hookMapLocationLayer();
     }
@@ -134,6 +143,37 @@ final class FindHubMapHook {
                     }
                 });
         log("marker pipeline " + className + "#" + methodName
+                + " overloads=" + hooks.size());
+        return hooks.size();
+    }
+
+    private static int hookCameraModePipeline(
+            ClassLoader loader, String className, String methodName) {
+        Class<?> cameraState = XposedHelpers.findClassIfExists(
+                className, loader);
+        if (cameraState == null) {
+            log("camera mode class not found " + className);
+            return 0;
+        }
+        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(
+                cameraState,
+                methodName,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length != 1
+                                || param.args[0] == null) {
+                            return;
+                        }
+                        boolean followsUserLocation = "USER_LOCATION".equals(
+                                String.valueOf(param.args[0]));
+                        synchronized (USER_LOCATION_CAMERA_STATES) {
+                            USER_LOCATION_CAMERA_STATES.put(
+                                    param.thisObject, followsUserLocation);
+                        }
+                    }
+                });
+        log("camera mode pipeline " + className + "#" + methodName
                 + " overloads=" + hooks.size());
         return hooks.size();
     }
@@ -164,6 +204,19 @@ final class FindHubMapHook {
                                 ((Number) param.args[1]).doubleValue();
                         Coordinate result = correctedMarkerTarget(
                                 latitude, longitude);
+                        if (result == null
+                                && isFollowingUserLocation(param.thisObject)
+                                && !isCorrectedCameraTarget(
+                                latitude, longitude)
+                                && isGcj02Region(latitude, longitude)) {
+                            // Continuous location updates can reach the camera
+                            // before Google Maps reads the same Location for
+                            // its blue dot. Correct them while, and only while,
+                            // Find Hub is explicitly following USER_LOCATION.
+                            result = wgs84ToGcj02(latitude, longitude);
+                            rememberCameraTarget(
+                                    latitude, longitude, result);
+                        }
                         if (result == null) {
                             return;
                         }
@@ -218,6 +271,12 @@ final class FindHubMapHook {
                             }
                             Coordinate result = wgs84ToGcj02(
                                     sourceLatitude, sourceLongitude);
+                            // The People tab's crosshair recenters on the
+                            // built-in blue location dot rather than a Find
+                            // Hub marker. Register the same raw/corrected pair
+                            // so its camera target follows the corrected dot.
+                            rememberCameraTarget(
+                                    sourceLatitude, sourceLongitude, result);
                             param.setResult(latitude
                                     ? result.latitude : result.longitude);
                         } finally {
@@ -265,7 +324,7 @@ final class FindHubMapHook {
                     rememberOriginal(
                             point, new Coordinate(latitude, longitude));
                 }
-                rememberMarkerTarget(latitude, longitude, result);
+                rememberCameraTarget(latitude, longitude, result);
                 setDouble(point, "b", result.latitude);
                 setDouble(point, "c", result.longitude);
                 converted++;
@@ -323,7 +382,7 @@ final class FindHubMapHook {
         }
     }
 
-    private static void rememberMarkerTarget(
+    private static void rememberCameraTarget(
             double latitude, double longitude, Coordinate corrected) {
         synchronized (MARKER_CAMERA_TARGETS) {
             if (MARKER_CAMERA_TARGETS.size() >= 256) {
@@ -344,7 +403,22 @@ final class FindHubMapHook {
             if (CORRECTED_CAMERA_TARGETS.contains(key)) {
                 return null;
             }
-            return MARKER_CAMERA_TARGETS.get(key);
+        return MARKER_CAMERA_TARGETS.get(key);
+        }
+    }
+
+    private static boolean isCorrectedCameraTarget(
+            double latitude, double longitude) {
+        synchronized (MARKER_CAMERA_TARGETS) {
+            return CORRECTED_CAMERA_TARGETS.contains(
+                    coordinateKey(latitude, longitude));
+        }
+    }
+
+    private static boolean isFollowingUserLocation(Object cameraState) {
+        synchronized (USER_LOCATION_CAMERA_STATES) {
+            return Boolean.TRUE.equals(
+                    USER_LOCATION_CAMERA_STATES.get(cameraState));
         }
     }
 
